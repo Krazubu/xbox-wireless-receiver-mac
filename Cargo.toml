@@ -1,0 +1,13 @@
+[package]
+name = "xbox-dongle"
+version = "0.1.0"
+edition = "2024"
+description = "Userspace macOS driver for the Xbox Wireless Adapter"
+license = "GPL-2.0-or-later"
+
+[dependencies]
+anyhow = "1.0.104"
+block2 = "0.6.2"
+env_logger = "0.11.11"
+log = "0.4.35"
+nusb = "0.2.9"
