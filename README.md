@@ -75,19 +75,37 @@ Autres prérequis : Rust (édition 2024), les outils en ligne de commande Xcode
    ./scripts/fetch-firmware.sh 02fe
    ```
 
-2. **Installer le service** (agent launchd de l'utilisateur, démarré à
-   l'ouverture de session) :
+2. **Installer l'app** de barre des menus :
 
    ```bash
-   ./scripts/install-agent.sh
+   ./scripts/install-app.sh
    ```
 
-   Le script compile en release, signe le binaire avec l'entitlement, le copie
-   dans `~/Library/Application Support/xbox-dongle/` avec le firmware, et
-   démarre l'agent `com.github.xbox-dongle`. Le driver attend le dongle, le
-   pilote dès qu'il est branché, et se relance après un débranchement.
+   Le script construit `Xbox Dongle.app` (l'app Swift et le driver signé avec
+   l'entitlement, intégré au bundle), l'installe dans `/Applications`, copie le
+   firmware dans `~/Library/Application Support/xbox-dongle/firmware/` et lance
+   l'app. Il retire l'agent launchd s'il était installé.
+
+   L'app lance le driver, le relance s'il s'arrête, et affiche son état dans la
+   barre des menus :
+
+   | Icône | État |
+   |---|---|
+   | manette estompée | en attente de l'adaptateur |
+   | manette (contour) | adaptateur prêt, aucune manette |
+   | manette pleine | au moins une manette connectée |
+   | clignotante | appairage en cours |
+   | triangle | erreur (détail dans le menu) |
+
+   Le menu liste les manettes et leur batterie, et propose « Appairer une
+   manette », « Télécharger le firmware… » s'il manque, « Ouvrir à l'ouverture
+   de session », le journal et le redémarrage du driver.
 
    Journal : `~/Library/Logs/xbox-dongle.log`.
+
+   *Variante sans app* : `./scripts/install-agent.sh` installe le driver seul
+   comme agent launchd (démarré à l'ouverture de session, sans icône). Ne pas
+   utiliser les deux en même temps.
 
 3. **Appairer une manette** : appuyer sur le bouton du dongle (sa LED clignote),
    puis maintenir le bouton d'appairage de la manette jusqu'à ce que son logo
@@ -96,7 +114,9 @@ Autres prérequis : Rust (édition 2024), les outils en ligne de commande Xcode
    Si la manette a été appairée au Mac en Bluetooth, l'oublier dans
    Réglages Système → Bluetooth, sinon elle s'y reconnectera plutôt qu'au dongle.
 
-Désinstallation : `./scripts/uninstall-agent.sh`.
+Désinstallation : quitter l'app et supprimer `/Applications/Xbox Dongle.app`
+(et `~/Library/Application Support/xbox-dongle`), ou
+`./scripts/uninstall-agent.sh` pour la variante agent.
 
 ## Utilisation manuelle
 
@@ -111,7 +131,12 @@ Désinstallation : `./scripts/uninstall-agent.sh`.
 | `list` | Affiche le dongle branché et le firmware attendu |
 | `load-firmware <fw>` | Charge seulement le firmware |
 | `run <fw>` | Pilote le dongle jusqu'à son débranchement |
-| `serve <fw>` | Comme `run`, mais attend et relance indéfiniment (utilisé par l'agent) |
+| `serve <fw>` | Comme `run`, mais attend et relance indéfiniment (utilisé par l'app et l'agent) |
+
+Avec `--json` en premier argument, le driver écrit son état en JSON sur la
+sortie standard, une ligne par événement, et lit des commandes sur l'entrée
+standard (`pair`). C'est ainsi que l'app communique avec lui, voir
+[src/status.rs](src/status.rs).
 
 `<fw>` est un fichier firmware ou un dossier contenant des
 `xbox_dongle_<pid>.bin` (le bon est choisi selon le dongle).
@@ -119,8 +144,8 @@ Désinstallation : `./scripts/uninstall-agent.sh`.
 Journal détaillé : `RUST_LOG=xbox_dongle=debug` (liste de contrôle des boutons,
 vibrations, trames de commande) ou `=trace` (toutes les trames radio et GIP).
 
-Ne pas lancer `run` pendant que l'agent tourne : un seul programme peut piloter
-le dongle. Arrêter l'agent avec
+Ne pas lancer `run` pendant que l'app ou l'agent tourne : un seul programme
+peut piloter le dongle. Quitter l'app depuis son menu, ou arrêter l'agent avec
 `launchctl bootout gui/$(id -u)/com.github.xbox-dongle`.
 
 ## Fonctionnement
@@ -129,11 +154,12 @@ le dongle. Arrêter l'agent avec
 manette ──radio──▶ dongle (puce MT76 + firmware Microsoft)
                       │ USB (requêtes vendeur, bulk)
                       ▼
-               xbox-dongle (nusb)
+               xbox-dongle (nusb)  ◀──JSON──▶  Xbox Dongle.app (barre des menus)
                  ├─ mt76.rs    firmware, radio, balise, clients 802.11
                  ├─ dongle.rs  boucle d'événements, appairage, clients
                  ├─ gip.rs     protocole GIP (annonce, identification, entrées, vibrations)
-                 └─ hid.rs     manette virtuelle IOHIDUserDevice
+                 ├─ hid.rs     manette virtuelle IOHIDUserDevice
+                 └─ status.rs  état JSON et commandes pour l'app
                       │
                       ▼
         macOS : GameController, SDL, Steam, navigateurs

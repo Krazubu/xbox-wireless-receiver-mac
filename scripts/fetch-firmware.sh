@@ -16,12 +16,13 @@ case "$pid" in
         sha='0023a7bae02974834500c665a281e25b1ba52c9226c84989f9084fa5ce591d9b'; file='FW_ACC_CL.bin' ;;
   091e) url='https://catalog.s.download.windowsupdate.com/d/msdownload/update/driver/drvs/2017/08/aeff215c-3bc4-4d36-a3ea-e14bfa8fa9d2_e58550c4f74a27e51e5cb6868b10ff633fa77164.cab'
         sha='e2710daf81e7b36d35985348f68a81d18bc537a2b0c508ffdfde6ac3eae1bad7'; file='FW_ACC_BR.bin' ;;
-  *) echo "usage: $0 <02e6|02fe|02f9|091e>  (product id from 'xbox-dongle list')" >&2; exit 1 ;;
+  *) echo "usage: $0 <02e6|02fe|02f9|091e> [output dir]  (product id from 'xbox-dongle list')" >&2; exit 1 ;;
 esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/firmware/xbox_dongle_$pid.bin"
-mkdir -p "$root/firmware"
+dir="${2:-$root/firmware}"   # optional output directory
+out="$dir/xbox_dongle_$pid.bin"
+mkdir -p "$dir"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 curl -fsSL -o "$tmp/driver.cab" "$url"

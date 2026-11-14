@@ -5,6 +5,7 @@ mod dongle;
 mod gip;
 mod hid;
 mod mt76;
+mod status;
 
 use std::{
     path::PathBuf,
@@ -14,11 +15,12 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use nusb::{DeviceInfo, MaybeFuture};
+use serde_json::json;
 
 use mt76::{Firmware, Mt76, ADAPTERS, MICROSOFT_VID};
 
-const USAGE: &str =
-    "usage: xbox-dongle <list | load-firmware <fw.bin> | run <fw.bin> | serve <fw.bin>>";
+const USAGE: &str = "usage: xbox-dongle [--json] <list | load-firmware <fw> | run <fw> | serve <fw>>\n\
+     <fw> is a firmware file or a directory of xbox_dongle_<pid>.bin files";
 
 fn find_adapter() -> Result<Option<DeviceInfo>> {
     Ok(nusb::list_devices()
@@ -60,14 +62,26 @@ fn cmd_list() -> Result<()> {
 /// Upload and start the firmware, then return a freshly opened adapter.
 /// `path` is a firmware file, or a directory holding `xbox_dongle_<pid>.bin`
 /// files (as written by scripts/fetch-firmware.sh).
+fn firmware_path(path: &std::path::Path, pid: u16) -> PathBuf {
+    if path.is_dir() {
+        path.join(format!("xbox_dongle_{pid:04x}.bin"))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn adapter_name(pid: u16) -> &'static str {
+    ADAPTERS.iter().find(|a| a.0 == pid).map_or("Xbox Wireless Adapter", |a| a.1)
+}
+
 fn load_firmware(path: PathBuf) -> Result<Mt76> {
     let info = find_adapter()?.context("no Xbox Wireless Adapter found")?;
     println!("adapter: {}", describe(&info));
-    let path = if path.is_dir() {
-        path.join(format!("xbox_dongle_{:04x}.bin", info.product_id()))
-    } else {
-        path
-    };
+    status::emit(
+        "starting",
+        json!({"adapter": adapter_name(info.product_id()), "pid": format!("{:04x}", info.product_id())}),
+    );
+    let path = firmware_path(&path, info.product_id());
     let data = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
     let fw = Firmware::parse(&data)?;
     println!(
@@ -98,16 +112,34 @@ fn load_firmware(path: PathBuf) -> Result<Mt76> {
 }
 
 /// Run forever: wait for the adapter, drive it, and start over when it is
-/// unplugged or fails. Meant for the launchd agent.
+/// unplugged or fails. Used by the menu bar app and the launchd agent.
 fn serve(fw: PathBuf) -> Result<()> {
     loop {
         if find_adapter()?.is_none() {
             log::info!("waiting for an Xbox Wireless Adapter...");
+            status::emit("waiting", json!({}));
             wait_for_adapter(Duration::MAX)?;
+        }
+        // Wait (quietly) for the firmware file if it is missing.
+        if let Some(info) = find_adapter()? {
+            let path = firmware_path(&fw, info.product_id());
+            if !path.exists() {
+                let pid = format!("{:04x}", info.product_id());
+                log::warn!("missing firmware {}", path.display());
+                status::emit(
+                    "error",
+                    json!({"message": format!("firmware missing for adapter {pid}"), "firmware_missing": pid}),
+                );
+                while !path.exists() && find_adapter()?.is_some() {
+                    sleep(Duration::from_secs(1));
+                }
+                continue;
+            }
         }
         let result = load_firmware(fw.clone()).and_then(|mt| dongle::Dongle::new(mt).run());
         if let Err(e) = result {
             log::warn!("adapter stopped: {e:#}");
+            status::emit("stopped", json!({"message": format!("{e:#}")}));
         }
         sleep(Duration::from_secs(2));
     }
@@ -115,7 +147,11 @@ fn serve(fw: PathBuf) -> Result<()> {
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().map(String::as_str) == Some("--json") {
+        args.next();
+        status::enable();
+    }
     let cmd = args.next();
     let mut fw = || args.next().map(PathBuf::from).context(USAGE);
     match cmd.as_deref() {

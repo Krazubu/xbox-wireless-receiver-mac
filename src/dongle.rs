@@ -19,10 +19,13 @@ use nusb::{
     Endpoint,
 };
 
+use serde_json::json;
+
 use crate::{
     gip::{self, Event, GamepadState},
     hid::{Rumble, VirtualGamepad},
     mt76::*,
+    status,
 };
 
 const MAX_CLIENTS: usize = 16;
@@ -45,6 +48,8 @@ struct Slot {
     guide: bool,
     /// Firmware version from the GIP announce, e.g. "5.23.6.0".
     firmware: String,
+    /// Last battery (kind, level) reported, to only emit changes.
+    battery: Option<(u8, u8)>,
 }
 
 impl Slot {
@@ -216,6 +221,10 @@ impl Dongle {
         self.mt.init_radio().context("radio init")?;
         // Like xone: start in pairing mode so already-paired controllers reconnect.
         self.set_pairing(true)?;
+        status::emit(
+            "ready",
+            json!({"address": fmt_mac(&self.mt.address), "channel": self.mt.channel_index()}),
+        );
         println!(
             "ready. Turn a paired controller on, or press the pair button on the \
              controller (and on the adapter to restart pairing). Ctrl-C to quit."
@@ -241,6 +250,10 @@ impl Dongle {
                     anyhow::bail!("adapter disconnected");
                 }
                 Err(RecvTimeoutError::Timeout) => {}
+            }
+            if status::take_pair_request() {
+                log::info!("pairing requested by the app");
+                self.set_pairing(true)?;
             }
             if self.pairing_until.is_some_and(|t| Instant::now() > t) {
                 log::info!("pairing timed out");
@@ -281,6 +294,7 @@ impl Dongle {
         self.mt.set_led_mode(led)?;
         self.pairing_until = enable.then(|| Instant::now() + PAIRING_TIMEOUT);
         log::info!("pairing {}", if enable { "enabled (60 s)" } else { "disabled" });
+        status::emit("pairing", json!({"on": enable}));
         Ok(())
     }
 
@@ -428,7 +442,9 @@ impl Dongle {
             hid: None,
             guide: false,
             firmware: String::new(),
+            battery: None,
         });
+        status::emit("connected", json!({"wcid": wcid, "mac": fmt_mac(&addr)}));
         println!("controller {} connected (wcid {wcid})", fmt_mac(&addr));
         // Close pairing once a controller is in; this also turns the LED solid.
         if self.pairing_until.is_some() {
@@ -444,6 +460,7 @@ impl Dongle {
         }
         let Some(slot) = self.clients[wcid as usize - 1].take() else { return Ok(()) };
         println!("controller {} {why} (wcid {wcid})", fmt_mac(&slot.address));
+        status::emit("disconnected", json!({"wcid": wcid, "reason": why}));
         self.mt.remove_client(wcid)?;
         if self.client_count() == 0 && self.pairing_until.is_none() {
             self.mt.set_led_mode(LedMode::Off)?;
@@ -481,6 +498,10 @@ impl Dongle {
                     println!(
                         "[{wcid}] announce: vendor {vendor:#06x} product {product:#06x} firmware {firmware}"
                     );
+                    status::emit(
+                        "controller",
+                        json!({"wcid": wcid, "firmware": firmware, "product": format!("{product:04x}")}),
+                    );
                     slot.firmware = firmware;
                 }
                 Event::Identified { len } => {
@@ -495,12 +516,19 @@ impl Dongle {
                                 println!("[{wcid}] virtual Xbox Wireless Controller (Bluetooth 045e:0b13) created");
                                 slot.hid = Some(hid);
                             }
-                            Err(e) => log::warn!("[{wcid}] {e:#}"),
+                            Err(e) => {
+                                log::warn!("[{wcid}] {e:#}");
+                                status::emit("error", json!({"message": format!("{e:#}")}));
+                            }
                         }
                     }
                 }
                 Event::Battery { kind, level } => {
-                    log::debug!("[{wcid}] battery type {kind} level {level}/3")
+                    log::debug!("[{wcid}] battery type {kind} level {level}/3");
+                    if slot.battery != Some((kind, level)) {
+                        slot.battery = Some((kind, level));
+                        status::emit("battery", json!({"wcid": wcid, "kind": kind, "level": level}));
+                    }
                 }
                 Event::Guide(down) => {
                     log::debug!("[{wcid}] Guide {}", if down { "down" } else { "up" });

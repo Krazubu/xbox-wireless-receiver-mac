@@ -1,3 +1,4 @@
 /target
 /firmware
 .DS_Store
+/build
