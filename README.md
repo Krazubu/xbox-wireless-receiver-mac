@@ -1,199 +1,197 @@
 # xbox-dongle
 
-Driver en espace utilisateur pour l'**adaptateur sans fil Xbox** (le dongle USB
-Microsoft) sur macOS. Il pilote le dongle, appaire et connecte les manettes Xbox,
-puis les présente à macOS comme de vraies manettes Xbox, reconnues par le
-framework GameController (jeux Mac natifs), SDL, Steam et les navigateurs.
+Userspace driver for the **Xbox Wireless Adapter** (Microsoft's USB dongle) on
+macOS. It drives the dongle, pairs and connects Xbox controllers, and presents
+them to macOS as genuine Xbox controllers, recognized by the GameController
+framework (native Mac games), SDL, Steam and web browsers.
 
-Écrit en Rust, sans extension noyau ni DriverKit, et sans compte développeur
-Apple payant — au prix d'une sécurité système réduite (voir
-[Prérequis](#prérequis-sécurité)).
+Written in Rust, with no kernel extension or DriverKit, and without a paid
+Apple developer account — at the cost of reduced system security (see
+[Requirements](#requirements-security)).
 
-## État
+## Status
 
-Testé sur un Mac M4 (macOS 27.2), dongle « slim » `045e:02fe`, manette Xbox
-Series (firmware 5.23.6.0).
+Tested on an M4 Mac (macOS 27.2), "slim" adapter `045e:02fe`, Xbox Series
+controller (firmware 5.23.6.0).
 
-| Fonction | État |
+| Feature | Status |
 |---|---|
-| Chargement du firmware (à froid et à chaud) | ✅ |
-| Appairage, reconnexion automatique, voyants | ✅ |
-| Entrées : 15 boutons, croix, gâchettes, sticks | ✅ |
-| Reconnu par GameController comme manette Xbox | ✅ |
-| Vibrations (poignées et gâchettes) | ✅ |
-| Bouton Guide transmis aux applications | ❌ réservé par macOS |
-| Chiffrement du lien radio | ❌ non implémenté (pas nécessaire pour cette manette) |
-| Plusieurs manettes simultanées | ⚠️ prévu dans le code, jamais essayé |
-| Casque audio, mise à jour de firmware manette | ❌ |
+| Firmware loading (cold and warm) | ✅ |
+| Pairing, automatic reconnection, LEDs | ✅ |
+| Inputs: 15 buttons, d-pad, triggers, sticks | ✅ |
+| Recognized by GameController as an Xbox controller | ✅ |
+| Rumble (grips and triggers) | ✅ |
+| Guide button delivered to applications | ❌ reserved by macOS |
+| Radio link encryption | ❌ not implemented (not needed for this controller) |
+| Several controllers at once | ⚠️ supported in the code, never tried |
+| Headset audio, controller firmware updates | ❌ |
 
-Dongles reconnus : `045e:02e6` (original), `045e:02fe` (slim), `045e:02f9` et
-`045e:091e` (intégrés). Seul le `02fe` a été essayé.
+Supported adapters: `045e:02e6` (original), `045e:02fe` (slim), `045e:02f9` and
+`045e:091e` (built-in). Only the `02fe` has been tried.
 
-## Prérequis (sécurité)
+## Requirements (security)
 
-La manette virtuelle est créée avec l'API `IOHIDUserDevice`, qui exige
-l'entitlement restreint `com.apple.developer.hid.virtual.device`. Sans profil de
-provisionnement Apple, un binaire signé avec cet entitlement est tué au
-lancement, sauf si **SIP est désactivé et AMFI assoupli**.
+The virtual controller is created with the `IOHIDUserDevice` API, which
+requires the restricted entitlement `com.apple.developer.hid.virtual.device`.
+Without an Apple provisioning profile, a binary signed with that entitlement is
+killed at launch unless **SIP is disabled and AMFI is relaxed**.
 
-Sur un Mac Apple Silicon : éteindre, maintenir le bouton d'alimentation →
-**Options** → **Utilitaires → Terminal**, puis :
+On an Apple Silicon Mac: shut down, hold the power button → **Options** →
+**Utilities → Terminal**, then:
 
 ```bash
 csrutil disable
 nvram boot-args="amfi_get_out_of_my_way=1"
 ```
 
-et redémarrer. Vérifier ensuite avec `csrutil status` et `nvram boot-args`.
+and restart. Check with `csrutil status` and `nvram boot-args`.
 
-> ⚠️ C'est une baisse de sécurité pour toute la machine : SIP ne protège plus le
-> système, et AMFI ne vérifie plus les signatures ni les entitlements d'aucun
-> programme. Les apps iPhone/iPad sur Mac peuvent cesser de fonctionner.
+> ⚠️ This lowers security for the whole machine: SIP no longer protects the
+> system, and AMFI no longer checks signatures or entitlements of any program.
+> iPhone/iPad apps on the Mac may stop working.
 
-Pour revenir en arrière (même Terminal de récupération) :
+To revert (same recovery Terminal):
 
 ```bash
 nvram -d boot-args
 csrutil enable
 ```
 
-Sans ces réglages, le driver fonctionne quand même (appairage, entrées dans le
-journal) avec une compilation `cargo build` non signée, mais aucune manette
-n'apparaît dans macOS.
+Without these settings the driver still works (pairing, inputs in the log) with
+an unsigned `cargo build`, but no controller shows up in macOS.
 
-Autres prérequis : Rust (édition 2024), les outils en ligne de commande Xcode
-(`codesign`), `curl`.
+Other requirements: Rust (2024 edition), the Xcode command line tools
+(`codesign`, `swiftc`), `curl`.
 
 ## Installation
 
-1. **Récupérer le firmware** du dongle depuis le Microsoft Update Catalog.
-   Il n'est pas redistribué avec ce projet et reste soumis aux
-   [conditions d'utilisation de Microsoft](https://www.microsoft.com/en-us/legal/terms-of-use).
-   Le modèle s'obtient avec `cargo run -- list`.
+1. **Fetch the adapter firmware** from the Microsoft Update Catalog. It is not
+   redistributed with this project and remains subject to
+   [Microsoft's terms of use](https://www.microsoft.com/en-us/legal/terms-of-use).
+   Get your adapter model with `cargo run -- list`.
 
    ```bash
    ./scripts/fetch-firmware.sh 02fe
    ```
 
-2. **Installer l'app** de barre des menus :
+2. **Install the menu bar app**:
 
    ```bash
    ./scripts/install-app.sh
    ```
 
-   Le script construit `Xbox Dongle.app` (l'app Swift et le driver signé avec
-   l'entitlement, intégré au bundle), l'installe dans `/Applications`, copie le
-   firmware dans `~/Library/Application Support/xbox-dongle/firmware/` et lance
-   l'app. Il retire l'agent launchd s'il était installé.
+   The script builds `Xbox Dongle.app` (the Swift app plus the driver, signed
+   with the entitlement and bundled inside), installs it in `/Applications`,
+   copies the firmware to `~/Library/Application Support/xbox-dongle/firmware/`
+   and launches the app. It removes the launchd agent if it was installed.
 
-   L'app lance le driver, le relance s'il s'arrête, et affiche son état dans la
-   barre des menus :
+   The app starts the driver, restarts it if it exits, and shows its state in
+   the menu bar:
 
-   | Icône | État |
+   | Icon | State |
    |---|---|
-   | manette estompée | en attente de l'adaptateur |
-   | manette (contour) | adaptateur prêt, aucune manette |
-   | manette pleine | au moins une manette connectée |
-   | clignotante | appairage en cours |
-   | triangle | erreur (détail dans le menu) |
+   | dimmed controller | waiting for the adapter |
+   | controller outline | adapter ready, no controller |
+   | filled controller | at least one controller connected |
+   | blinking | pairing in progress |
+   | triangle | error (details in the menu) |
 
-   Le menu liste les manettes et leur batterie, et propose « Appairer une
-   manette », « Télécharger le firmware… » s'il manque, « Ouvrir à l'ouverture
-   de session », le journal et le redémarrage du driver.
+   The menu (in French) lists the controllers and their battery, and offers
+   pairing (« Appairer une manette »), firmware download if it is missing
+   (« Télécharger le firmware… »), open at login (« Ouvrir à l'ouverture de
+   session »), the log and a driver restart.
 
-   Journal : `~/Library/Logs/xbox-dongle.log`.
+   Log: `~/Library/Logs/xbox-dongle.log`.
 
-   *Variante sans app* : `./scripts/install-agent.sh` installe le driver seul
-   comme agent launchd (démarré à l'ouverture de session, sans icône). Ne pas
-   utiliser les deux en même temps.
+   *Without the app*: `./scripts/install-agent.sh` installs the driver alone as
+   a launchd agent (started at login, no icon). Do not use both at once.
 
-3. **Appairer une manette** : appuyer sur le bouton du dongle (sa LED clignote),
-   puis maintenir le bouton d'appairage de la manette jusqu'à ce que son logo
-   clignote vite. Ensuite, la manette se reconnecte seule à l'allumage.
+3. **Pair a controller**: press the button on the adapter (its LED blinks),
+   then hold the controller's pair button until its logo blinks fast. After
+   that, the controller reconnects by itself when turned on.
 
-   Si la manette a été appairée au Mac en Bluetooth, l'oublier dans
-   Réglages Système → Bluetooth, sinon elle s'y reconnectera plutôt qu'au dongle.
+   If the controller was paired with the Mac over Bluetooth, forget it in
+   System Settings → Bluetooth, otherwise it will reconnect there instead of to
+   the adapter.
 
-Désinstallation : quitter l'app et supprimer `/Applications/Xbox Dongle.app`
-(et `~/Library/Application Support/xbox-dongle`), ou
-`./scripts/uninstall-agent.sh` pour la variante agent.
+Uninstall: quit the app and delete `/Applications/Xbox Dongle.app` (and
+`~/Library/Application Support/xbox-dongle`), or run
+`./scripts/uninstall-agent.sh` for the agent setup.
 
-## Utilisation manuelle
+## Manual use
 
 ```bash
-./scripts/build-signed.sh            # compile en release et signe
-./target/release/xbox-dongle list    # détecte le dongle
+./scripts/build-signed.sh            # release build, signed
+./target/release/xbox-dongle list    # detect the adapter
 ./target/release/xbox-dongle run firmware/xbox_dongle_02fe.bin
 ```
 
-| Commande | Rôle |
+| Command | Purpose |
 |---|---|
-| `list` | Affiche le dongle branché et le firmware attendu |
-| `load-firmware <fw>` | Charge seulement le firmware |
-| `run <fw>` | Pilote le dongle jusqu'à son débranchement |
-| `serve <fw>` | Comme `run`, mais attend et relance indéfiniment (utilisé par l'app et l'agent) |
+| `list` | Show the connected adapter and the firmware it needs |
+| `load-firmware <fw>` | Only load the firmware |
+| `run <fw>` | Drive the adapter until it is unplugged |
+| `serve <fw>` | Like `run`, but waits and restarts forever (used by the app and the agent) |
 
-Avec `--json` en premier argument, le driver écrit son état en JSON sur la
-sortie standard, une ligne par événement, et lit des commandes sur l'entrée
-standard (`pair`). C'est ainsi que l'app communique avec lui, voir
-[src/status.rs](src/status.rs).
+`<fw>` is a firmware file or a directory of `xbox_dongle_<pid>.bin` files (the
+right one is picked for the connected adapter).
 
-`<fw>` est un fichier firmware ou un dossier contenant des
-`xbox_dongle_<pid>.bin` (le bon est choisi selon le dongle).
+With `--json` as the first argument, the driver writes its state as JSON on
+stdout, one line per event, and reads commands on stdin (`pair`). This is how
+the app talks to it, see [src/status.rs](src/status.rs).
 
-Journal détaillé : `RUST_LOG=xbox_dongle=debug` (liste de contrôle des boutons,
-vibrations, trames de commande) ou `=trace` (toutes les trames radio et GIP).
+Verbose logs: `RUST_LOG=xbox_dongle=debug` (button checklist, rumble,
+controller command frames) or `=trace` (every radio and GIP frame).
 
-Ne pas lancer `run` pendant que l'app ou l'agent tourne : un seul programme
-peut piloter le dongle. Quitter l'app depuis son menu, ou arrêter l'agent avec
+Do not use `run` while the app or the agent is running: only one program can
+drive the adapter. Quit the app from its menu, or stop the agent with
 `launchctl bootout gui/$(id -u)/com.github.xbox-dongle`.
 
-## Fonctionnement
+## How it works
 
 ```
-manette ──radio──▶ dongle (puce MT76 + firmware Microsoft)
-                      │ USB (requêtes vendeur, bulk)
-                      ▼
-               xbox-dongle (nusb)  ◀──JSON──▶  Xbox Dongle.app (barre des menus)
-                 ├─ mt76.rs    firmware, radio, balise, clients 802.11
-                 ├─ dongle.rs  boucle d'événements, appairage, clients
-                 ├─ gip.rs     protocole GIP (annonce, identification, entrées, vibrations)
-                 ├─ hid.rs     manette virtuelle IOHIDUserDevice
-                 └─ status.rs  état JSON et commandes pour l'app
-                      │
-                      ▼
-        macOS : GameController, SDL, Steam, navigateurs
+controller ──radio──▶ adapter (MT76 chip + Microsoft firmware)
+                         │ USB (vendor requests, bulk)
+                         ▼
+                  xbox-dongle (nusb)  ◀──JSON──▶  Xbox Dongle.app (menu bar)
+                    ├─ mt76.rs    firmware, radio, beacon, 802.11 clients
+                    ├─ dongle.rs  event loop, pairing, clients
+                    ├─ gip.rs     GIP protocol (announce, identify, inputs, rumble)
+                    ├─ hid.rs     IOHIDUserDevice virtual controller
+                    └─ status.rs  JSON state and commands for the app
+                         │
+                         ▼
+           macOS: GameController, SDL, Steam, browsers
 ```
 
-- **Dongle.** Puce MediaTek MT76 (`0x7613`) sur un lien 802.11 propriétaire à
-  5 GHz. Le driver lui envoie son firmware, configure la radio, émet la balise
-  d'appairage et associe les manettes (jusqu'à 16).
-- **GIP.** Les manettes parlent le *Gaming Input Protocol*, documenté par
-  Microsoft dans [MS-GIPUSB](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gipusb/e7c90904-5e21-426e-b9ad-d82adeee0dbc).
-- **Manette virtuelle.** Elle imite exactement une manette Xbox Series en
-  Bluetooth LE (`045e:0b13`) : même descripteur HID (relevé sur une vraie
-  manette avec `ioreg`), mêmes propriétés. macOS crée lui-même ses manettes
-  Bluetooth LE comme périphériques virtuels, et sa personnalité GameController
-  accepte les périphériques virtuels pour ce modèle (`GCIOMatchVirtual`) : la
-  manette est donc reconnue comme une Xbox. Les vibrations arrivent par le
-  rapport de sortie n°3, de même format que la commande GIP de vibration.
+- **Adapter.** A MediaTek MT76 chip (`0x7613`) on a proprietary 802.11 link at
+  5 GHz. The driver uploads its firmware, configures the radio, sends the
+  pairing beacon and associates controllers (up to 16).
+- **GIP.** Controllers speak the *Gaming Input Protocol*, documented by
+  Microsoft in [MS-GIPUSB](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gipusb/e7c90904-5e21-426e-b9ad-d82adeee0dbc).
+- **Virtual controller.** It mirrors an Xbox Series controller over Bluetooth
+  LE (`045e:0b13`) exactly: same HID report descriptor (read from a real
+  controller with `ioreg`), same properties. macOS itself creates Bluetooth LE
+  controllers as virtual devices, and its GameController personality accepts
+  virtual devices for this model (`GCIOMatchVirtual`), so the controller is
+  recognized as an Xbox one. Rumble arrives in output report 3, which has the
+  same layout as the GIP rumble command.
 
-## Écarts notables avec xone
+## Notable differences from xone
 
-- Après une demande d'appairage, l'appairage reste ouvert jusqu'à l'association
-  de la manette (xone le ferme aussitôt, ce qui laissait parfois la manette
-  bloquée en recherche).
-- Relance à chaud du firmware : méthode de xow (réinitialisation puis
-  rechargement) ; le dongle `02fe` signale la réinitialisation par `0` et non
-  `0x80000000`.
-- Bouton Share : octet à l'index 18 du rapport d'entrée, avec ou sans les
-  compteurs de latence en fin de rapport.
+- After a pairing request, pairing stays open until the controller associates
+  (xone closes it right away, which sometimes left the controller stuck
+  searching).
+- Warm firmware restart uses xow's method (reset, then reload); the `02fe`
+  adapter reports the reset as `0` rather than `0x80000000`.
+- Share button: byte at index 18 of the input report, with or without the
+  latency counters at the end of the report.
 
-## Crédits et licence
+## Credits and license
 
-GPL-2.0-or-later. Le code radio et GIP est porté de
-[xone](https://github.com/dlundqvist/xone) et [xow](https://github.com/medusalix/xow)
-(Severin von Wnuck-Lipinski et contributeurs, GPL-2.0-or-later), avec l'aide de
-la spécification MS-GIPUSB de Microsoft.
+GPL-2.0-or-later. The radio and GIP code is ported from
+[xone](https://github.com/dlundqvist/xone) and [xow](https://github.com/medusalix/xow)
+(Severin von Wnuck-Lipinski and contributors, GPL-2.0-or-later), with help from
+Microsoft's MS-GIPUSB specification.
 
-Le firmware du dongle appartient à Microsoft et n'est pas distribué ici.
+The adapter firmware belongs to Microsoft and is not distributed here.
